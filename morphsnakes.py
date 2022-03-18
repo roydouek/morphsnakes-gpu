@@ -54,7 +54,9 @@ __author__ = "P. Márquez Neila <p.mneila@upm.es>"
 from itertools import cycle
 
 import numpy as np
+import cupy as cp
 from scipy import ndimage as ndi
+import cupyx.scipy.ndimage as ndigpu
 
 __all__ = [
     'morphological_chan_vese',
@@ -100,9 +102,9 @@ _P3[8][[0, 1, 2], [2, 1, 0], :] = 1
 def sup_inf(u):
     """SI operator."""
 
-    if np.ndim(u) == 2:
+    if cp.ndim(u) == 2:
         P = _P2
-    elif np.ndim(u) == 3:
+    elif cp.ndim(u) == 3:
         P = _P3
     else:
         raise ValueError("u has an invalid number of dimensions "
@@ -110,7 +112,7 @@ def sup_inf(u):
 
     erosions = []
     for P_i in P:
-        erosions.append(ndi.binary_erosion(u, P_i))
+        erosions.append(ndigpu.binary_erosion(cp.array(u), cp.array(P_i)).get())
 
     return np.array(erosions, dtype=np.int8).max(0)
 
@@ -118,9 +120,9 @@ def sup_inf(u):
 def inf_sup(u):
     """IS operator."""
 
-    if np.ndim(u) == 2:
+    if cp.ndim(u) == 2:
         P = _P2
-    elif np.ndim(u) == 3:
+    elif cp.ndim(u) == 3:
         P = _P3
     else:
         raise ValueError("u has an invalid number of dimensions "
@@ -128,7 +130,7 @@ def inf_sup(u):
 
     dilations = []
     for P_i in P:
-        dilations.append(ndi.binary_dilation(u, P_i))
+        dilations.append(ndigpu.binary_dilation(cp.array(u), cp.array(P_i)).get())
 
     return np.array(dilations, dtype=np.int8).min(0)
 
@@ -320,8 +322,9 @@ def inverse_gaussian_gradient(image, alpha=100.0, sigma=5.0):
         Preprocessed image (or volume) suitable for
         `morphological_geodesic_active_contour`.
     """
-    gradnorm = ndi.gaussian_gradient_magnitude(image, sigma, mode='nearest')
-    return 1.0 / np.sqrt(1.0 + alpha * gradnorm)
+    image = cp.array(image)
+    gradnorm = ndigpu.gaussian_gradient_magnitude(image, sigma, mode='nearest')
+    return 1.0 / np.sqrt(1.0 + alpha * gradnorm.get())
 
 
 def morphological_chan_vese(image, iterations, init_level_set='checkerboard',
@@ -404,17 +407,25 @@ def morphological_chan_vese(image, iterations, init_level_set='checkerboard',
 
     iter_callback(u)
 
+    image = cp.array(image)
+
     for _ in range(iterations):
 
         # inside = u > 0
         # outside = u <= 0
+        u = cp.array(u)
         c0 = (image * (1 - u)).sum() / float((1 - u).sum() + 1e-8)
         c1 = (image * u).sum() / float(u.sum() + 1e-8)
 
         # Image attachment
-        du = np.gradient(u)
-        abs_du = np.abs(du).sum(0)
+        du = cp.asarray(cp.gradient(u))
+        abs_du = cp.abs(du).sum(0)
+        abs_du = cp.asarray(abs_du)
         aux = abs_du * (lambda1 * (image - c1)**2 - lambda2 * (image - c0)**2)
+        del du
+        del abs_du
+        del c0
+        del c1
 
         u[aux < 0] = 1
         u[aux > 0] = 0
@@ -518,34 +529,38 @@ def morphological_geodesic_active_contour(gimage, iterations,
     if threshold == 'auto':
         threshold = np.percentile(image, 40)
 
-    structure = np.ones((3,) * len(image.shape), dtype=np.int8)
-    dimage = np.gradient(image)
+    
+    structure = cp.array(np.ones((3,) * len(image.shape), dtype=np.int8))
+    image = cp.array(image)
+    dimage = cp.gradient(image)
     # threshold_mask = image > threshold
     if balloon != 0:
-        threshold_mask_balloon = image > threshold / np.abs(balloon)
+        threshold_mask_balloon = image > threshold / cp.abs(balloon)
 
-    u = np.int8(init_level_set > 0)
+    u = cp.array(np.int8(init_level_set > 0))
 
-    iter_callback(u)
+    iter_callback(u.get())
 
     for _ in range(iterations):
 
+        u = cp.array(u)
         # Balloon
         if balloon > 0:
-            aux = ndi.binary_dilation(u, structure)
+            aux = ndigpu.binary_dilation(u, structure)
         elif balloon < 0:
-            aux = ndi.binary_erosion(u, structure)
+            aux = ndigpu.binary_erosion(u, structure)
         if balloon != 0:
             u[threshold_mask_balloon] = aux[threshold_mask_balloon]
 
         # Image attachment
-        aux = np.zeros_like(image)
-        du = np.gradient(u)
+        aux = cp.zeros_like(image)
+        du = cp.gradient(u)
         for el1, el2 in zip(dimage, du):
             aux += el1 * el2
         u[aux > 0] = 1
         u[aux < 0] = 0
-
+        del aux
+        del du
         # Smoothing
         for _ in range(smoothing):
             u = _curvop(u)
