@@ -125,6 +125,7 @@ def visual_callback_3d(fig=None, plot_each=1):
         ax.plot_trisurf(coords[:, 0], coords[:, 1], coords[:, 2],
                         triangles=triangles)
         plt.pause(0.1)
+        print(counter[0])
 
     return callback
 
@@ -263,6 +264,7 @@ def example_confocal3d():
 
 
 if __name__ == '__main__':
+    matplotlib.use('TKAgg')
     logging.basicConfig(level=logging.DEBUG)
     example_nodule()
     example_starfish()
@@ -272,7 +274,7 @@ if __name__ == '__main__':
 
     # Uncomment the following line to see a 3D example
     # This is skipped by default since mplot3d is VERY slow plotting 3d meshes
-    # example_confocal3d()
+    example_confocal3d()
 
     logging.info("Done.")
     plt.show()
